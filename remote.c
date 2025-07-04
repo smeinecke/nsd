@@ -4,22 +4,22 @@
  * Copyright (c) 2008, NLnet Labs. All rights reserved.
  *
  * This software is open source.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * Redistributions of source code must retain the above copyright notice,
  * this list of conditions and the following disclaimer.
- * 
+ *
  * Redistributions in binary form must reproduce the above copyright notice,
  * this list of conditions and the following disclaimer in the documentation
  * and/or other materials provided with the distribution.
- * 
+ *
  * Neither the name of the NLNET LABS nor the names of its contributors may
  * be used to endorse or promote products derived from this software without
  * specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
  * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -38,7 +38,7 @@
  *
  * This file contains the remote control functionality for the daemon.
  * The remote control can be performed using either the commandline
- * nsd-control tool, or a TLS capable web browser. 
+ * nsd-control tool, or a TLS capable web browser.
  * The channel is secured using TLSv1, and certificates.
  * Both the server and the client(control tool) have their own keys.
  */
@@ -128,8 +128,12 @@ struct rc_state {
 	struct event c;
 	/** timeout for this state */
 	struct timeval tval;
+	/** last activity time for persistent connections */
+	struct timeval last_activity;
 	/** in the handshake part */
 	enum { rc_none, rc_hs_read, rc_hs_write } shake_state;
+	/** persistent connection mode */
+	int persistent;
 #ifdef HAVE_SSL
 	/** the ssl state */
 	SSL* ssl;
@@ -167,6 +171,10 @@ struct daemon_remote {
 	int active;
 	/** max active commpoints */
 	int max_active;
+	/** enable persistent control connections */
+	int persistent_mode;
+	/** idle timeout for persistent connections in seconds */
+	time_t persistent_timeout;
 	/** current commpoints busy; double linked, malloced */
 	struct rc_state* busy_list;
 	/** last time stats was reported */
@@ -190,7 +198,7 @@ struct remote_stream {
 };
 typedef struct remote_stream RES;
 
-/** 
+/**
  * Print fixed line of text over ssl connection in blocking mode
  * @param res: print to
  * @param text: the text.
@@ -198,7 +206,7 @@ typedef struct remote_stream RES;
  */
 static int ssl_print_text(RES* res, const char* text);
 
-/** 
+/**
  * printf style printing to the ssl connection
  * @param res: the RES connection to print to. Blocking.
  * @param format: printf style format string.
@@ -247,7 +255,7 @@ log_crypto_err(const char* str)
 #ifdef BIND8_STATS
 /** subtract timers and the values do not overflow or become negative */
 void
-timeval_subtract(struct timeval* d, const struct timeval* end, 
+timeval_subtract(struct timeval* d, const struct timeval* end,
 	const struct timeval* start)
 {
 #ifndef S_SPLINT_S
@@ -283,6 +291,8 @@ daemon_remote_create(struct nsd_options* cfg)
 	struct daemon_remote* rc = (struct daemon_remote*)xalloc_zero(
 		sizeof(*rc));
 	rc->max_active = 10;
+	rc->persistent_mode = cfg->persistent_mode;
+	rc->persistent_timeout = cfg->persistent_timeout;
 	assert(cfg->control_enable);
 
 	if(options_remote_is_address(cfg)) {
@@ -632,9 +642,15 @@ remote_accept_callback(int fd, short event, void* arg)
 		goto close_exit;
 	}
 
-	n->tval.tv_sec = REMOTE_CONTROL_TCP_TIMEOUT; 
+	/* Initialize persistent connection settings */
+	n->tval.tv_sec = REMOTE_CONTROL_TCP_TIMEOUT;
 	n->tval.tv_usec = 0L;
 	n->fd = newfd;
+	n->persistent = 0; /* Default to non-persistent */
+	if (gettimeofday(&n->last_activity, NULL) == -1) {
+		log_msg(LOG_ERR, "gettimeofday: %s", strerror(errno));
+	}
+	n->rc = rc; /* Store reference to daemon_remote */
 
 	memset(&n->c, 0, sizeof(n->c));
 	event_set(&n->c, newfd, EV_PERSIST|EV_TIMEOUT|EV_READ,
@@ -695,7 +711,7 @@ remote_accept_callback(int fd, short event, void* arg)
 	rc->busy_list = n;
 	rc->active ++;
 
-	/* perform the first nonblocking read already, for windows, 
+	/* perform the first nonblocking read already, for windows,
 	 * so it can return wouldblock. could be faster too. */
 	remote_control_callback(newfd, EV_READ, n);
 }
@@ -713,8 +729,16 @@ state_list_remove_elem(struct rc_state** list, struct rc_state* todel)
 static void
 clean_point(struct daemon_remote* rc, struct rc_state* s)
 {
+	/* If in persistent mode, just remove from busy list and return */
+	if (s->persistent && rc->persistent_mode) {
+		state_list_remove_elem(&rc->busy_list, s);
+		rc->active--;
+		return;
+	}
+
+	/* Not in persistent mode, clean up everything */
 	state_list_remove_elem(&rc->busy_list, s);
-	rc->active --;
+	rc->active--;
 	if(s->event_added)
 		event_del(&s->c);
 #ifdef HAVE_SSL
@@ -730,7 +754,7 @@ clean_point(struct daemon_remote* rc, struct rc_state* s)
 static int
 ssl_print_text(RES* res, const char* text)
 {
-	if(!res) 
+	if(!res)
 		return 0;
 #ifdef HAVE_SSL
 	if(res->ssl) {
@@ -837,7 +861,7 @@ static char*
 skipwhite(char* str)
 {
 	/* EOS \0 is not a space */
-	while( isspace((unsigned char)*str) ) 
+	while( isspace((unsigned char)*str) )
 		str++;
 	return str;
 }
@@ -1284,7 +1308,7 @@ zonestat_inc_ifneeded(xfrd_state_type* xfrd)
 #ifdef USE_ZONE_STATS
 	if(xfrd->nsd->options->zonestatnames->count != xfrd->zonestat_safe)
 		task_new_zonestat_inc(xfrd->nsd->task[xfrd->nsd->mytask],
-			xfrd->last_task, 
+			xfrd->last_task,
 			xfrd->nsd->options->zonestatnames->count);
 #else
 	(void)xfrd;
@@ -1568,7 +1592,7 @@ do_addzones(RES* ssl, xfrd_state_type* xfrd)
 		if(buf[0] == 0x04 && buf[1] == 0)
 			break; /* end of transmission */
 		if(!perform_addzone(ssl, xfrd, buf)) {
-			if(!ssl_printf(ssl, "error for input line '%s'\n", 
+			if(!ssl_printf(ssl, "error for input line '%s'\n",
 				buf))
 				return;
 		} else {
@@ -1590,7 +1614,7 @@ do_delzones(RES* ssl, xfrd_state_type* xfrd)
 		if(buf[0] == 0x04 && buf[1] == 0)
 			break; /* end of transmission */
 		if(!perform_delzone(ssl, xfrd, buf)) {
-			if(!ssl_printf(ssl, "error for input line '%s'\n", 
+			if(!ssl_printf(ssl, "error for input line '%s'\n",
 				buf))
 				return;
 		} else {
@@ -1710,7 +1734,7 @@ add_cfgzone(xfrd_state_type* xfrd, const char* pname)
 	if(!zopt)
 		return;
 	zopt->part_of_config = 1;
-	zopt->name = region_strdup(xfrd->nsd->options->region, 
+	zopt->name = region_strdup(xfrd->nsd->options->region,
 		pname + strlen(PATTERN_IMPLICIT_MARKER));
 	zopt->pattern = pattern_options_find(xfrd->nsd->options, pname);
 	if(!zopt->name || !zopt->pattern)
@@ -2405,7 +2429,7 @@ can_dump_cookie_secrets(RES* ssl, nsd_type* const nsd)
 	else
 		return 1;
 	return 0;
-	
+
 }
 
 /* returns `0` on failure */
@@ -2601,9 +2625,33 @@ cmdcmp(char* p, const char* cmd, size_t len)
 	return strncmp(p,cmd,len)==0 && (p[len]==0||p[len]==' '||p[len]=='\t');
 }
 
+/** Handle the PERSISTENT command to enable/disable persistent connections */
+static void
+do_persistent(RES* ssl, struct rc_state* s, char* arg)
+{
+	struct daemon_remote* rc = s->rc;
+
+	if (!rc->persistent_mode) {
+		ssl_printf(ssl, "error persistent connections are disabled in the configuration\n");
+		return;
+	}
+
+	if (!arg || !*arg || strcasecmp(arg, "on") == 0) {
+		s->persistent = 1;
+	} else if (strcasecmp(arg, "off") == 0) {
+		s->persistent = 0;
+	} else {
+		ssl_printf(ssl, "error invalid argument '%s', expected 'on' or 'off'\n", arg);
+		return;
+	}
+
+	ssl_printf(ssl, "OK persistent mode %s (timeout: %d seconds)\n",
+		s->persistent ? "on" : "off", (int)rc->persistent_timeout);
+}
+
 /** execute a remote control command */
 static void
-execute_cmd(struct daemon_remote* rc, RES* ssl, char* cmd)
+execute_cmd(struct daemon_remote* rc, RES* ssl, struct rc_state* s, char* cmd)
 {
 	char* p = skipwhite(cmd);
 	/* compare command */
@@ -2665,6 +2713,8 @@ execute_cmd(struct daemon_remote* rc, RES* ssl, char* cmd)
 		do_print_cookie_secrets(ssl, rc->xfrd, skipwhite(p+20));
 	} else if(cmdcmp(p, "activate_cookie_secret", 22)) {
 		do_activate_cookie_secret(ssl, rc->xfrd, skipwhite(p+22));
+	} else if(cmdcmp(p, "persistent", 10)) {
+		do_persistent(ssl, s, skipwhite(p+10));
 	} else {
 		(void)ssl_printf(ssl, "error unknown command '%s'\n", p);
 	}
@@ -2731,7 +2781,7 @@ handle_req(struct daemon_remote* rc, struct rc_state* s, RES* res)
 	VERBOSITY(0, (LOG_INFO, "control cmd: %s", buf));
 
 	/* figure out what to do */
-	execute_cmd(rc, res, buf);
+	execute_cmd(rc, res, s, buf);
 }
 
 #ifdef HAVE_SSL
@@ -2789,10 +2839,43 @@ remote_control_callback(int fd, short event, void* arg)
 	RES res;
 	struct rc_state* s = (struct rc_state*)arg;
 	struct daemon_remote* rc = s->rc;
-	if( (event&EV_TIMEOUT) ) {
+
+	/* Update last activity time */
+	if (gettimeofday(&s->last_activity, NULL) == -1) {
+		log_msg(LOG_ERR, "gettimeofday: %s", strerror(errno));
+	}
+
+	/* Check for timeout */
+	if ((event&EV_TIMEOUT)) {
+		if (s->persistent && rc->persistent_mode) {
+			/* For persistent connections, only timeout if idle for too long */
+			struct timeval now, diff;
+			if (gettimeofday(&now, NULL) == -1) {
+				log_msg(LOG_ERR, "gettimeofday: %s", strerror(errno));
+				clean_point(rc, s);
+				return;
+			}
+			timersub(&now, &s->last_activity, &diff);
+			if (diff.tv_sec < rc->persistent_timeout) {
+				/* Reset the timeout */
+				event_add(&s->c, &s->tval);
+				return;
+			}
+		}
 		log_msg(LOG_ERR, "remote control timed out");
 		clean_point(rc, s);
 		return;
+	}
+
+	/* For persistent connections, reset the event to listen for more data */
+	if (s->persistent && rc->persistent_mode) {
+		if (s->event_added) {
+			event_del(&s->c);
+		}
+		event_set(&s->c, fd, EV_READ|EV_PERSIST|EV_TIMEOUT, remote_control_callback, s);
+		event_base_set(rc->xfrd->event_base, &s->c);
+		event_add(&s->c, &s->tval);
+		s->event_added = 1;
 	}
 #ifdef HAVE_SSL
 	if(s->ssl) {
@@ -2868,7 +2951,7 @@ print_longnum(RES* ssl, char* desc, uint64_t x)
 		/* more than a Gb */
 		size_t front = (size_t)(x / (uint64_t)1000000);
 		size_t back = (size_t)(x % (uint64_t)1000000);
-		return ssl_printf(ssl, "%s%lu%6.6lu\n", desc, 
+		return ssl_printf(ssl, "%s%lu%6.6lu\n", desc,
 			(unsigned long)front, (unsigned long)back);
 	} else {
 		return ssl_printf(ssl, "%s%lu\n", desc, (unsigned long)x);
@@ -3015,7 +3098,7 @@ zonestat_print(RES *ssl, struct evbuffer *evbuf, xfrd_state_type *xfrd,
 		memcpy(&stat0, &zonestats[0][n->id], sizeof(stat0));
 		memcpy(&stat1, &zonestats[1][n->id], sizeof(stat1));
 		stats_add(&stat0, &stat1);
-		
+
 		/* save a copy of current (cumulative) stats in stat1 */
 		memcpy(&stat1, &stat0, sizeof(stat1));
 		/* subtract last total of stats that was 'cleared' */
@@ -3093,7 +3176,7 @@ print_stats(RES* ssl, xfrd_state_type* xfrd, struct timeval* now, int clear,
 		return;
 	if(!print_longnum(ssl, "size.xfrd.mem=", region_get_mem(xfrd->region)))
 		return;
-	if(!print_longnum(ssl, "size.config.disk=", 
+	if(!print_longnum(ssl, "size.config.disk=",
 		xfrd->nsd->options->zonelist_off))
 		return;
 	if(!print_longnum(ssl, "size.config.mem=", region_get_mem(

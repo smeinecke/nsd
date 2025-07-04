@@ -65,7 +65,7 @@ struct nsd_options {
 
 	/* tree of zonestat names and their id values, entries are struct
 	 * zonestatname with malloced key=stringname. The number of items
-	 * is the max statnameid, no items are freed from this. 
+	 * is the max statnameid, no items are freed from this.
 	 * kept correct in the xfrd process, and on startup. */
 	rbtree_type* zonestatnames;
 
@@ -162,6 +162,10 @@ struct nsd_options {
 	char* control_key_file;
 	/** certificate file for nsd-control */
 	char* control_cert_file;
+	/* enable persistent control connections */
+	int persistent_mode;
+	/* timeout in seconds for persistent connections */
+	time_t persistent_timeout;
 
 #ifdef USE_METRICS
 	/** metrics section. enable toggle. */

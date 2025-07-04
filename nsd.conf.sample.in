@@ -357,6 +357,16 @@ remote-control:
 	# set up the keys and certificates with nsd-control-setup.
 	# control-enable: no
 
+	# Enable persistent control connections (default: no).
+	# When enabled, control connections stay open after a command is processed,
+	# allowing multiple commands per connection. The connection will be closed
+	# after the idle timeout or when the client disconnects.
+	# persistent-mode: no
+
+	# Idle timeout in seconds for persistent control connections (default: 300).
+	# The connection will be closed if no commands are received within this time.
+	# persistent-timeout: 300
+
 	# what interfaces are listened to for control, default is on localhost.
 	# interfaces can be specified by IP address or interface name.
 	# with an interface name, all IP addresses associated with that

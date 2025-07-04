@@ -162,6 +162,8 @@ nsd_options_create(region_type* region)
 	opt->server_cert_file = CONFIGDIR"/nsd_server.pem";
 	opt->control_key_file = CONFIGDIR"/nsd_control.key";
 	opt->control_cert_file = CONFIGDIR"/nsd_control.pem";
+	opt->persistent_mode = 0;        /* disabled by default */
+	opt->persistent_timeout = 300;   /* 5 minutes default timeout */
 #ifdef USE_METRICS
 	opt->metrics_enable = 0;
 	opt->metrics_interface = NULL;
@@ -529,7 +531,7 @@ parse_zone_list_file(struct nsd_options* opt)
 	*/
 	char hdr[64];
 	char buf[1024];
-	
+
 	/* create empty data structures */
 	opt->zonefree = rbtree_create(opt->region, comp_zonebucket);
 	opt->zonelist = NULL;
@@ -1247,7 +1249,7 @@ copy_acl_list(struct nsd_options* opt, struct acl_options* a)
 		if(!blist) blist = b;
 		else blast->next = b;
 		blast = b;
-		
+
 		a = a->next;
 	}
 	return blist;
@@ -3084,9 +3086,9 @@ resolve_interface_names(struct nsd_options* options)
 	if(getifaddrs(&addrs) == -1)
 		  error("failed to list interfaces");
 
-	resolve_interface_names_for_ref(&options->ip_addresses, 
+	resolve_interface_names_for_ref(&options->ip_addresses,
 			addrs, options->region);
-	resolve_interface_names_for_ref(&options->control_interface, 
+	resolve_interface_names_for_ref(&options->control_interface,
 			addrs, options->region);
 #ifdef USE_METRICS
 	resolve_interface_names_for_ref(&options->metrics_interface,

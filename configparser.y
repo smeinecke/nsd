@@ -170,6 +170,8 @@ struct component {
 %token VAR_SERVER_CERT_FILE
 %token VAR_CONTROL_KEY_FILE
 %token VAR_CONTROL_CERT_FILE
+%token VAR_CONTROL_PERSISTENT_MODE
+%token VAR_CONTROL_PERSISTENT_TIMEOUT
 
 /* key */
 %token VAR_KEY
@@ -555,7 +557,7 @@ server_option:
       if(*$2) cfg_parser->opt->cookie_secret_file = region_strdup(cfg_parser->opt->region, $2);
       cfg_parser->opt->cookie_secret_file_is_default = 0;
     }
-    
+
   | VAR_XFRD_TCP_MAX number
     { cfg_parser->opt->xfrd_tcp_max = (int)$2; }
   | VAR_XFRD_TCP_PIPELINE number
@@ -785,6 +787,17 @@ remote_control_option:
     { cfg_parser->opt->control_key_file = region_strdup(cfg_parser->opt->region, $2); }
   | VAR_CONTROL_CERT_FILE STRING
     { cfg_parser->opt->control_cert_file = region_strdup(cfg_parser->opt->region, $2); }
+  | VAR_CONTROL_PERSISTENT_MODE boolean
+    { cfg_parser->opt->persistent_mode = $2; }
+  | VAR_CONTROL_PERSISTENT_TIMEOUT number
+    {
+      if($2 > 0) {
+        cfg_parser->opt->persistent_timeout = (time_t)$2;
+      } else {
+        yyerror("persistent-timeout must be greater than 0");
+        YYERROR;
+      }
+    }
   ;
 
 tls_auth:
@@ -1100,7 +1113,7 @@ pattern_or_zone_option:
     {
       cfg_parser->pattern->min_retry_time = $2;
       cfg_parser->pattern->min_retry_time_is_default = 0;
-    } 
+    }
   | VAR_MIN_EXPIRE_TIME STRING
     {
       long long num;
@@ -1140,7 +1153,7 @@ pattern_or_zone_option:
   | VAR_VERIFIER_FEED_ZONE boolean
     { cfg_parser->pattern->verifier_feed_zone = $2; }
   | VAR_VERIFIER_TIMEOUT number
-    { cfg_parser->pattern->verifier_timeout = $2; } 
+    { cfg_parser->pattern->verifier_timeout = $2; }
   | VAR_CATALOG catalog_role
     {
       if($2 == CATALOG_ROLE_PRODUCER && cfg_parser->pattern->request_xfr)
@@ -1148,11 +1161,11 @@ pattern_or_zone_option:
       cfg_parser->pattern->catalog_role = $2;
       cfg_parser->pattern->catalog_role_is_default = 0;
     }
-  | VAR_CATALOG_MEMBER_PATTERN STRING 
-    { 
-      cfg_parser->pattern->catalog_member_pattern = region_strdup(cfg_parser->opt->region, $2); 
+  | VAR_CATALOG_MEMBER_PATTERN STRING
+    {
+      cfg_parser->pattern->catalog_member_pattern = region_strdup(cfg_parser->opt->region, $2);
     }
-  | VAR_CATALOG_PRODUCER_ZONE STRING 
+  | VAR_CATALOG_PRODUCER_ZONE STRING
     {
       dname_type *dname;
 
@@ -1163,7 +1176,7 @@ pattern_or_zone_option:
         yyerror("bad catalog producer name %s", $2);
       } else {
         region_recycle(cfg_parser->opt->region, dname, dname_total_size(dname));
-        cfg_parser->pattern->catalog_producer_zone = region_strdup(cfg_parser->opt->region, $2); 
+        cfg_parser->pattern->catalog_producer_zone = region_strdup(cfg_parser->opt->region, $2);
       }
     };
 
