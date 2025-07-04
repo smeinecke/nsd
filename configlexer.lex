@@ -258,6 +258,8 @@ server-key-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_SERVER_KEY_FILE;
 server-cert-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_SERVER_CERT_FILE;}
 control-key-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_KEY_FILE;}
 control-cert-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_CERT_FILE;}
+persistent-mode{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_PERSISTENT_MODE;}
+persistent-timeout{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_PERSISTENT_TIMEOUT;}
 metrics-enable{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_METRICS_ENABLE;}
 metrics-interface{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_METRICS_INTERFACE;}
 metrics-port{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_METRICS_PORT;}
